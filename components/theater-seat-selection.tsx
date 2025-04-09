@@ -14,7 +14,7 @@ import { Check, X, ChevronRight, Info } from "lucide-react"
 import { cn } from "@/lib/utils"
 
 // Define seat status types
-type SeatStatus = "available" | "occupied" | "selected" | "suggested"
+type SeatStatus = "available" | "occupied" | "selected" | "suggested" | "selected-suggested"
 
 // Define seat interface
 interface Seat {
@@ -28,7 +28,7 @@ interface Seat {
 // Configuración del teatro
 const THEATER_CONFIG = {
   ticketPrice: 5000, // ₡5,000 colones
-  serviceFee: 750, // ₡750 colones
+  ivaRate: 0.13, // 13% IVA rate
   rows: ["A", "B", "C", "D", "E", "F", "G", "H"],
   centerRow: "D", // Fila central para el algoritmo de sugerencia
 }
@@ -166,8 +166,8 @@ export default function TheaterSeatSelection() {
             console.warn("Cannot select more seats than the number of tickets.")
             return seat // Return the seat unchanged
           }
-        } else if (seat.status === "selected") {
-          // Allow deselecting anytime
+        } else if (seat.status === "selected" || seat.status === "selected-suggested") {
+          // Allow deselecting anytime (selected or selected-suggested seats)
           setSelectedSeats((prev) => prev.filter((id) => id !== seatId))
           // Explicitly cast status to SeatStatus
           return { ...seat, status: "available" as SeatStatus } // Return to available status
@@ -197,7 +197,9 @@ export default function TheaterSeatSelection() {
 
       setSeats((prev) =>
         prev.map((seat) =>
-          seatsToDeselect.includes(seat.id) && seat.status === "selected" ? { ...seat, status: "available" as SeatStatus } : seat,
+          seatsToDeselect.includes(seat.id) && (seat.status === "selected" || seat.status === "selected-suggested")
+            ? { ...seat, status: "available" as SeatStatus }
+            : seat,
         ),
       )
     }
@@ -207,15 +209,23 @@ export default function TheaterSeatSelection() {
   const handleSelectSuggested = () => {
     if (suggestedSeats.size === 0) return
 
-    // Limpiar selecciones anteriores
-    setSelectedSeats([...suggestedSeats])
+    // Actualizar la lista de asientos seleccionados directamente con las sugerencias
+    const suggestedSeatIds = Array.from(suggestedSeats)
+    setSelectedSeats(suggestedSeatIds)
 
     // Actualizar estado de asientos
     setSeats((prev) =>
-      prev.map((seat) => ({
-        ...seat,
-        status: suggestedSeats.has(seat.id) ? "selected" as SeatStatus : seat.status === "selected" ? "available" as SeatStatus : seat.status,
-      })),
+      prev.map((seat) => {
+        if (suggestedSeatIds.includes(seat.id)) {
+          // Marcar los sugeridos como 'selected-suggested' (azul)
+          return { ...seat, status: "selected-suggested" as SeatStatus }
+        } else if (seat.status === "selected" || seat.status === "selected-suggested") {
+          // Desmarcar cualquier asiento previamente seleccionado (amarillo o azul) que no esté en las nuevas sugerencias
+          return { ...seat, status: "available" as SeatStatus }
+        }
+        // Mantener el estado de los demás (available, occupied, suggested)
+        return seat
+      }),
     )
   }
 
@@ -287,20 +297,27 @@ export default function TheaterSeatSelection() {
                                   ? "ocupado"
                                   : seat.status === "suggested"
                                     ? "sugerido"
-                                    : "seleccionado"
+                                    : seat.status === "selected-suggested"
+                                      ? "seleccionado (sugerido)"
+                                      : "seleccionado" // 'selected' case
                                 }`}
                               className={cn(
                                 "w-7 h-7 md:w-8 md:h-8 rounded-t-lg flex items-center justify-center text-xs transition-all duration-200",
                                 seat.status === "available" &&
                                 "bg-[#4CAF50] hover:bg-[#4CAF50]/80 focus:ring-2 focus:ring-[#4CAF50]/50",
                                 seat.status === "occupied" && "bg-[#E91E63] cursor-not-allowed opacity-70",
+                                // Manual selection - Yellow
                                 seat.status === "selected" &&
                                 "bg-[#FFC107] hover:bg-[#FFC107]/80 focus:ring-2 focus:ring-[#FFC107]/50",
+                                // Suggested (pulsing blue)
                                 seat.status === "suggested" &&
                                 "bg-[#2196F3] hover:bg-[#2196F3]/80 focus:ring-2 focus:ring-[#2196F3]/50 animate-pulse",
+                                // Selected via suggestion (static blue)
+                                seat.status === "selected-suggested" &&
+                                "bg-[#2196F3] hover:bg-[#2196F3]/80 focus:ring-2 focus:ring-[#2196F3]/50",
                               )}
                             >
-                              {seat.status === "selected" && <Check className="w-3 h-3" />}
+                              {(seat.status === "selected" || seat.status === "selected-suggested") && <Check className="w-3 h-3" />}
                               {seat.status === "occupied" && <X className="w-3 h-3" />}
                               {(seat.status === "available" || seat.status === "suggested") && seat.number}
                             </button>
@@ -336,6 +353,12 @@ export default function TheaterSeatSelection() {
                       <span className="sr-only">Sugerido</span>
                     </Badge>
                     <span className="text-sm">Sugerido</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Badge className="bg-[#2196F3]" variant="default">
+                      <span className="sr-only">Seleccionado (Sugerencia)</span>
+                    </Badge>
+                    <span className="text-sm">Seleccionado (Sugerencia)</span>
                   </div>
                 </div>
               </CardFooter>
@@ -396,15 +419,22 @@ export default function TheaterSeatSelection() {
                     <span className="text-sm">Precio por boleto</span>
                     <span className="font-medium">{formatCurrency(THEATER_CONFIG.ticketPrice)}</span>
                   </div>
-                  <div className="flex justify-between">
-                    <span className="text-sm">Cargo por servicio</span>
-                    <span className="font-medium">{formatCurrency(THEATER_CONFIG.serviceFee)}</span>
-                  </div>
+                  {selectedSeats.length > 0 && (
+                    <div className="flex justify-between">
+                      <span className="text-sm">IVA ({(THEATER_CONFIG.ivaRate * 100).toFixed(0)}%)</span>
+                      <span className="font-medium">{
+                        formatCurrency(selectedSeats.length * THEATER_CONFIG.ticketPrice * THEATER_CONFIG.ivaRate)
+                      }</span>
+                    </div>
+                  )}
                   <div className="flex justify-between">
                     <span className="font-medium">Total</span>
-                    <span className="font-bold text-lg">
-                      {formatCurrency(selectedSeats.length * (THEATER_CONFIG.ticketPrice + THEATER_CONFIG.serviceFee))}
-                    </span>
+                    <span className="font-bold text-lg">{
+                      formatCurrency(
+                        selectedSeats.length *
+                        (THEATER_CONFIG.ticketPrice + THEATER_CONFIG.ticketPrice * THEATER_CONFIG.ivaRate),
+                      )
+                    }</span>
                   </div>
                 </div>
               </CardContent>
